@@ -1,0 +1,43 @@
+<canvas id="canvas"></canvas>
+<!--
+for most samples webgl-utils only provides shader compiling/linking and
+canvas resizing because why clutter the examples with code that's the same in every sample.
+See https://webglfundamentals.org/webgl/lessons/webgl-boilerplate.html
+and https://webglfundamentals.org/webgl/lessons/webgl-resizing-the-canvas.html
+for webgl-utils, m3, m4, and webgl-lessons-ui.
+-->
+
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Document</title>
+
+	<style>
+		@import url("https://webglfundamentals.org/webgl/resources/webgl-tutorials.css");
+		body {
+		  margin: 0;
+		}
+		canvas {
+		  width: 100vw;
+		  height: 100vh;
+		  /* width: 768;
+		  height: 432; */
+		  display: block;
+		}
+	</style>
+</head>
+<body>
+	<script src="
+https://cdn.jsdelivr.net/npm/stats-js@1.0.1/build/stats.min.js
+"></script>
+	<script src="https://webglfundamentals.org/webgl/resources/webgl-utils.js"></script>
+	<script src="https://webglfundamentals.org/webgl/resources/m4.js"></script>
+	<script type="module" src="./index.js"></script>
+</body>
+</html>
