@@ -1,370 +1,304 @@
-'use strict';
 import {GUI} from 'https://threejsfundamentals.org/threejs/../3rdparty/dat.gui.module.js';
+import {VS} from './shaders/vertex.js';
+import {FS} from './shaders/fragment.js';
+import {CS} from './shaders/compute.js';
+import {presets} from './presets.js';
 
-import {UpdatePositionVS} from "./shaders/updatePositionVS.js";
-import {UpdatePositionFS} from "./shaders/updatePositionFS.js";
-import {UpdateTrailVS} from "./shaders/updateTrailVS.js";
-import {UpdateTrailFS} from "./shaders/updateTrailFS.js";
-import {DrawParticlesFS} from "./shaders/drawParticlesFS.js";
-import {DrawParticlesVS} from "./shaders/drawParticlesVS.js";
-import {ProcessTrailFS} from "./shaders/processTrailFS.js";
-import {ProcessTrailVS} from "./shaders/processTrailVS.js";
+// Initializing WebGPU (https://webgpufundamentals.org/webgpu/lessons/webgpu-fundamentals.html)
+async function start() {
+	if (!navigator.gpu) {
+	  fail('this browser does not support WebGPU');
+	  return;
+	}
+  
+	const adapter = await navigator.gpu.requestAdapter();
+	if (!adapter) {
+	  fail('this browser supports webgpu but it appears disabled');
+	  return;
+	}
+  
+	const device = await adapter?.requestDevice();
+	device.lost.then((info) => {
+	  console.error(`WebGPU device was lost: ${info.message}`);
 
-/* eslint no-alert: 0 */
-const settings = {
-    AgentMoveSpeed: 110.0,
-	AgentTurnSpeed: 34.0,
-	SensorOffsetDist: 40.0,
-	SensorAngleOffset: 0.2,
-	diffuseRate: 10,
-	evaporateRate: 0.9,
-};
+	  if (info.reason !== 'destroyed') {
+		start();
+	  }
+	});
+	
+	main(device);
+}
 
-// const startShape = {
-//     circleIn: restart,
-//     circleOut: restart,
-//   };
-// let AgentMoveSpeed = 3.0;
-let numAgents = 100000;
+async function main(device) {
 
-const gui = new GUI();
-gui.add(settings, 'AgentMoveSpeed', 30, 250).listen();
-gui.add(settings, 'AgentTurnSpeed', 0.0, 100).listen(); 
-gui.add(settings, 'SensorOffsetDist', 0, 50).listen();
-gui.add(settings, 'SensorAngleOffset', 0, 6).listen();
-gui.add(settings, 'diffuseRate', 0, 20).listen();
-gui.add(settings, 'evaporateRate', 0, 5).listen();
-// gui.add(settings, 'startShape', Object.keys(startShape)).listen();
+	// Get a WebGPU context from the canvas and configure it
+	const canvas = document.querySelector('canvas');
+	const context = canvas.getContext('webgpu');
+	const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+	context.configure({
+	  device,
+	  format: presentationFormat,
+	});
+  
+	// creating shader module 
+	const module = device.createShaderModule({
+	  label: 'Vertex + Compute + Fragment Shaders',
+	  code: VS + CS + FS,
+	});
+
+	var settings = presets.default;
+	var current_preset = {preset : presets.preset1};
+
+	const gui = new GUI();
+
+	const controllers = {
+		agentMoveSpeed : gui.add(settings, 'agentMoveSpeed', 0, 150).listen(),
+		agentTurnSpeed : gui.add(settings, 'agentTurnSpeed', -100, 100).listen(),
+		sensorOffsetDist : gui.add(settings, 'sensorOffsetDist', 0, 100).listen(),
+		sensorAngleOffset : gui.add(settings, 'sensorAngleOffset', 0, 360).listen(),
+		diffuseRate : gui.add(settings, 'diffuseRate', 0, 50).listen(),
+		evaporateRate : gui.add(settings, 'evaporateRate', 0, 20).listen(),
+		color : gui.addColor(settings, 'color'),
+		preset : gui.add(current_preset, 'preset', Object.keys(presets)),
+	}
+	
+	controllers.color.onChange(color => {settings.color = color});
+	controllers.preset.onChange(presetName => {
+	  	settings = presets[presetName];
+
+		for (var paramName in settings) 
+		{
+			if(controllers[paramName])
+				controllers[paramName].setValue(settings[paramName]);
+		}
+	  	restart();
+	});
+	gui.add({ restart: () => restart() }, 'restart');
 
 
-function main() {
-  	// Get A WebGL context
-  	/** @type {HTMLCanvasElement} */
-  	const canvas = document.querySelector("#canvas");
-  	const gl = canvas.getContext("webgl");
-  	if (!gl) {
-		return;
-  	}
-  	init(gl)
+	const NUM_AGENTS = 1000000;
+	const WIDTH = canvas.clientWidth;
+	const HEIGHT = canvas.clientHeight;
+
 	var stats = new Stats();
 	stats.showPanel( 0 ); // 0: fps, 1: ms, 2: mb, 3+: custom
 	document.body.appendChild( stats.dom );
-	webglUtils.resizeCanvasToDisplaySize(gl.canvas);	
 
-	// gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+	// A screen sized buffer to store the trail values
+	var slimes = new Float32Array(WIDTH * HEIGHT).fill(0);
+  	const trailBuffer = device.createBuffer({
+    	label: 'trail buffer',
+   		size: slimes.byteLength,
+    	usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+  	});
+  	device.queue.writeBuffer(trailBuffer, 0, slimes);
 
-	const AGENT_SIZE = 600;
+	// Setting uniforms
+	const screenDims = new Uint32Array([WIDTH, HEIGHT]);
+	const dimsBuffer = device.createBuffer({
+	  	label: 'screen dims buffer',
+		size: screenDims.byteLength,
+		usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+	});
+	device.queue.writeBuffer(dimsBuffer, 0, screenDims);
 
-	const drawProgram = webglUtils.createProgramFromSources(gl, [DrawParticlesVS, DrawParticlesFS]);
-	const updateProgram = webglUtils.createProgramFromSources(gl, [UpdatePositionVS, UpdatePositionFS]);
-	const updateTrailProg = webglUtils.createProgramFromSources(gl, [UpdateTrailVS, UpdateTrailFS]);
-	const processTrailProg = webglUtils.createProgramFromSources(gl, [ProcessTrailVS, ProcessTrailFS]);
+	const env = new Float32Array([settings.agentMoveSpeed, settings.agentTurnSpeed, settings.sensorOffsetDist, settings.sensorAngleOffset, settings.diffuseRate, settings.evaporateRate, settings.deltaTime, 0, settings.color[0], settings.color[1], settings.color[2]]);
+	const envBuffer = device.createBuffer({
+	  	label: 'screen dims buffer',
+		size: env.byteLength,
+		usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+	});
+	device.queue.writeBuffer(envBuffer, 0, env);
 
-	const updateProgLocs = {
-		agentMoveSpeed: gl.getUniformLocation(updateProgram, 'agentSpeed'),
-		agentTurnSpeed: gl.getUniformLocation(updateProgram, 'agentTurnSpeed'),
-		sensorOffsetDist: gl.getUniformLocation(updateProgram, 'sensorOffsetDist'),
-		sensorAngleOffset: gl.getUniformLocation(updateProgram, 'sensorAngleOffset'),
-		deltaTime: gl.getUniformLocation(updateProgram, 'deltaTime'),
+
+
+
+
+	// ============================== COMPUTE PIPELINE ================================
+	const computePipeline = device.createComputePipeline({
+		label: 'Compute pipeline',
+		layout: 'auto',
+		compute: {
+		  module,
+		  entryPoint: 'computeSomething',
+		},
+	});
+
+	// Buffer to store agent info
+	var input = create_agents_circleIn(NUM_AGENTS, WIDTH, HEIGHT);
+  	const agentBuffer = device.createBuffer({
+    	label: 'agent buffer',
+   		size: input.byteLength,
+    	usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+  	});
+  	device.queue.writeBuffer(agentBuffer, 0, input);
+
+  	// create a buffer on the GPU to get a copy of the results
+  	const resultBuffer = device.createBuffer({
+  	  label: 'result buffer',
+  	  size: input.byteLength,
+  	  usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+  	});
+
+	// Setup a bindGroup to tell the shader which
+  	// buffer to use for the computation
+  	const bindGroup = device.createBindGroup({
+  	  label: 'bindGroup for work buffer',
+  	  layout: computePipeline.getBindGroupLayout(0),
+  	  entries: [
+  	    { binding: 0, resource: { buffer: agentBuffer } },
+  	    { binding: 1, resource: { buffer: trailBuffer } },
+  	    { binding: 2, resource: { buffer: dimsBuffer } },
+  	    { binding: 3, resource: { buffer: envBuffer } },
+  	  ],
+  	});
+	
+
+
+
+
+
+	// ============================== COMPUTE PIPELINE ================================
+
+	// Vertex Buffer to draw a quad spanning the whole canvas
+	const vertexData = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+	const vertexBuffer = device.createBuffer({
+		label: 'vertex buffer vertices',
+		size: vertexData.byteLength,
+		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+	});
+	device.queue.writeBuffer(vertexBuffer, 0, vertexData);
+
+	const pipeline = device.createRenderPipeline({
+		label: 'render pipeline',
+		layout: 'auto',
+		vertex: {
+		  module,
+		  entryPoint: 'vs',
+		  buffers: [
+			  {
+				  arrayStride: 2 * 4, // 2 floats, 4 bytes each
+				  attributes: [{shaderLocation: 0, offset: 0, format: 'float32x2'}],
+			  },
+		  ],
+		},
+		fragment: {
+		  module,
+		  entryPoint: 'fs',
+		  targets: [{ format: presentationFormat }],
+		},
+	});
+	
+	const bindGroup2 = device.createBindGroup({
+		layout: pipeline.getBindGroupLayout(0),
+		entries: [
+		  { binding: 0, resource: {buffer: trailBuffer}},
+		  { binding: 1, resource: {buffer : dimsBuffer}},
+		  { binding: 2, resource: {buffer : envBuffer}},
+		],
+	});
+
+	const renderPassDescriptor = {
+	  label: 'renderPass',
+	  colorAttachments: [
+		{
+		  // view: <- to be filled out when we render
+		  clearValue: [0.3, 0.3, 0.3, 1],
+		  loadOp: 'clear',
+		  storeOp: 'store',
+		},
+	  ],
 	};
 
-	const processTrailLocs = {
-		diffuseRate: gl.getUniformLocation(processTrailProg, 'diffuseRate'),
-		evaporateRate: gl.getUniformLocation(processTrailProg, 'evaporateRate'),
-		canvasDims: gl.getUniformLocation(processTrailProg, 'canvasDims'),
-		deltaTime: gl.getUniformLocation(processTrailProg, 'deltaTime'),
+
+	function restart()
+	{
+		input = create_agents_circleIn(NUM_AGENTS, WIDTH, HEIGHT);
+		device.queue.writeBuffer(agentBuffer, 0, input);
+		slimes = new Float32Array(WIDTH * HEIGHT).fill(0);
+		device.queue.writeBuffer(trailBuffer, 0, slimes);
 	}
 
-	const bgBuffer = create_background(gl);
-	const drawbgBuffer = create_bgId(gl);
-	const AgentIdxBuffer = gl.createBuffer();	
 
-	// create texture for trail map
-	let tm = new Array(gl.canvas.width * gl.canvas.height).fill(0).map((_, i) => i);
-	const slimes = new Float32Array(tm.map(_ => [0, 0, 0, 0]).flat());
-	const trailOldTex = createTexture(gl, slimes, gl.canvas.width, gl.canvas.height)
-	const trailNewTex = createTexture(gl, null, gl.canvas.width, gl.canvas.height)
-
-	// create texture for agents info
-	let agentPos = create_agents_circleIn(AGENT_SIZE * AGENT_SIZE);
-	const agentOldTex = createTexture(gl, agentPos[1], AGENT_SIZE, AGENT_SIZE);
-	const agentNewTex = createTexture(gl, null, AGENT_SIZE, AGENT_SIZE);
-
-	// create framebuffer for agents info
-	const agentDim = {width: AGENT_SIZE, height: AGENT_SIZE}
-	const agentOldFB = createFramebuffer(gl, agentOldTex);
-	const agentNewFB = createFramebuffer(gl, agentNewTex);
-
-	// create framebuffer for trail map
-	const trailOldFB = createFramebuffer(gl, trailOldTex);
-	const trailNewFB = createFramebuffer(gl, trailNewTex);
-
-	let agentOld = {
-		fb: agentOldFB,
-		tex: agentOldTex
-	}
-
-	let agentNew = {
-		fb: agentNewFB,
-		tex: agentNewTex
-	}
-
-	let trailOld = {
-		fb: trailOldFB,
-		tex: trailOldTex
-	}
-
-	let trailNew = {
-		fb: trailNewFB,
-		tex: trailNewTex
-	}
+	// ============================== RENDER FUNCTION ================================
 
 	const deltaTime = 1/60;
-  	function render(time) {
-		time *= 0.001;
-		stats.begin()
+	async function render(time) {
+		time *= 0.0001;
+		stats.begin();
 
+		// update uniforms 
+		env.set([
+			settings.agentMoveSpeed,
+			settings.agentTurnSpeed,
+			settings.sensorOffsetDist,
+			settings.sensorAngleOffset,
+			settings.diffuseRate,
+			settings.evaporateRate,
+			settings.deltaTime,
+			time,
+			settings.color[0] / 255,
+			settings.color[1] / 255,
+			settings.color[2] / 255,
+		])
 
-		webglUtils.resizeCanvasToDisplaySize(gl.canvas);
-		// gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+		device.queue.writeBuffer(envBuffer, 0, env);
 
-		// render to agent info
-		gl.bindFramebuffer(gl.FRAMEBUFFER, agentNew.fb);
-		gl.viewport(0, 0, agentDim.width, agentDim.height);
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, bgBuffer);
-		fillAttributeData(gl, updateProgram, "position", 2, 0, 0);
-
-		gl.activeTexture(gl.TEXTURE0);
-		gl.bindTexture(gl.TEXTURE_2D, agentOld.tex);
-		gl.activeTexture(gl.TEXTURE0 + 1);
-		gl.bindTexture(gl.TEXTURE_2D, trailNew.tex);
-
-		gl.useProgram(updateProgram);
-
-
-		gl.uniform1i(gl.getUniformLocation(updateProgram, 'agentTex'), 0);
-		gl.uniform1i(gl.getUniformLocation(updateProgram, 'trailTex'), 1);
-		setUniform2f(gl, updateProgram, "texDims", [AGENT_SIZE, AGENT_SIZE])
-		setUniform2f(gl, updateProgram, "canvasDims", [gl.canvas.width, gl.canvas.height])
-		gl.uniform1f(updateProgLocs.agentMoveSpeed, settings.AgentMoveSpeed);
-		gl.uniform1f(updateProgLocs.agentTurnSpeed, settings.AgentTurnSpeed);
-		gl.uniform1f(updateProgLocs.sensorAngleOffset, settings.SensorAngleOffset);
-		gl.uniform1f(updateProgLocs.sensorOffsetDist, settings.SensorOffsetDist);
-		gl.uniform1f(updateProgLocs.deltaTime, deltaTime);
-
-		gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-		// // setUniform2f(gl, updateProgram, "texDims", [10, 10])
-		// setUniform2f(gl, updateProgram, "screenDims", [gl.canvas.width, gl.canvas.height])
-		// gl.drawArrays(gl.TRIANGLES, 0, 6);
+		// ============================== COMPUTE PASS ================================
+		var encoder = device.createCommandEncoder({label: 'slime encoder'});
+		var pass = encoder.beginComputePass({label: 'slime compute pass'});
+		pass.setPipeline(computePipeline);
+		pass.setBindGroup(0, bindGroup);
+		var workGroupsNeeded = NUM_AGENTS / 64;
+		pass.dispatchWorkgroups(workGroupsNeeded);
+		pass.end();
+	
+		// Encode a command to copy the results to a mappable buffer.
+		encoder.copyBufferToBuffer(agentBuffer, 0, resultBuffer, 0, resultBuffer.size);
 		
-		// var data = new Float32Array(10 * 10 * 4);
-		// gl.readPixels(0, 0, 10, 10, gl.RGBA, gl.FLOAT, data);
-		// console.log(data)
+		// Finish encoding and submit the commands
+		var commandBuffer = encoder.finish();
+		device.queue.submit([commandBuffer]);
 
-		// render to trail map
-		gl.bindFramebuffer(gl.FRAMEBUFFER, trailNew.fb);
-		gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
-		gl.useProgram(updateTrailProg);
+		// ============================== RENDER PASS ================================
+	  	// Get the current texture from the canvas context and
+	  	// set it as the texture to render to.
+	  	renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
+		  
+	  	const renderEncoder = device.createCommandEncoder({label: 'render encoder'});
+	  	const renderPass = renderEncoder.beginRenderPass(renderPassDescriptor);
+	  	renderPass.setPipeline(pipeline);
+	  	renderPass.setBindGroup(0, bindGroup2);
+	  	renderPass.setVertexBuffer(0, vertexBuffer);
+	  	renderPass.draw(6);  // call our vertex shader 6 times (2 triangles)
+	  	renderPass.end();
+  
+	  	const renderCommandBuffer = renderEncoder.finish();
+	  	device.queue.submit([renderCommandBuffer]);
 
-		gl.activeTexture(gl.TEXTURE0);
-		gl.bindTexture(gl.TEXTURE_2D, agentNew.tex);
-
-		setUniform2f(gl, updateTrailProg, "agentDims", [AGENT_SIZE, AGENT_SIZE]);
-		setUniform2f(gl, updateTrailProg, "canvasDims", [gl.canvas.width, gl.canvas.height])
-
-		bindArrayBuffer(gl, gl.ARRAY_BUFFER, AgentIdxBuffer, agentPos[0], gl.STATIC_DRAW);
-		fillAttributeData(gl, updateTrailProg, "position", 1, 0, 0);
-
-		gl.drawArrays(gl.POINTS, 0, AGENT_SIZE * AGENT_SIZE);
-
-		// var data = new Float32Array(10 * 10 * 4);
-		// gl.readPixels(0, 0, 10, 10, gl.RGBA, gl.FLOAT, data);
-		// console.log(data)
-		
-		
-		// process trail 
-
-		{
-			let temp = trailOld;
-			trailOld = trailNew;
-			trailNew = temp;
-		}
-
-		gl.bindFramebuffer(gl.FRAMEBUFFER, trailNew.fb);
-		gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-
-		gl.useProgram(processTrailProg);
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, bgBuffer);
-		fillAttributeData(gl, drawProgram, "position", 2, 0, 0);
-
-		gl.activeTexture(gl.TEXTURE0);
-		gl.bindTexture(gl.TEXTURE_2D, trailOld.tex);
-
-		setUniform2f(gl, processTrailProg, "canvasDims", [gl.canvas.width, gl.canvas.height])
-		gl.uniform2f(processTrailLocs.canvasDims, gl.canvas.width, gl.canvas.height);
-		gl.uniform1f(processTrailLocs.diffuseRate, settings.diffuseRate);
-		gl.uniform1f(processTrailLocs.evaporateRate, settings.evaporateRate);
-		gl.uniform1f(processTrailLocs.deltaTime, deltaTime);
-		gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-		
-		// render trailMap on screen
-		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-		gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, bgBuffer);
-		fillAttributeData(gl, drawProgram, "position", 2, 0, 0);
-
-		gl.activeTexture(gl.TEXTURE0);
-		gl.bindTexture(gl.TEXTURE_2D, trailNew.tex);
-
-		gl.useProgram(drawProgram);
-		setUniform2f(gl, drawProgram, "dimensions", [gl.canvas.width, gl.canvas.height])
-		setUniform2f(gl, drawProgram, "canvasDims", [gl.canvas.width, gl.canvas.height])
-
-		gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-		{
-			let temp = agentOld;
-			agentOld = agentNew;
-			agentNew = temp;
-		}
-
-		stats.end()
-		requestAnimationFrame(render);
- 	}	
-  	requestAnimationFrame(render);
-
-	function restart(agentsPos, agentsTex)
-	{
-		gl.clear(gl.COLOR_BUFFER_BIT);
+		stats.end();
+	  	requestAnimationFrame(render);
 	}
-}	
 
-main();
+  
+	// code to resize canvas (https://webgpufundamentals.org/webgpu/lessons/webgpu-fundamentals.html)
+	const observer = new ResizeObserver(entries => {
+	  for (const entry of entries) {
+		const canvas = entry.target;
+		const width = entry.contentBoxSize[0].inlineSize;
+		const height = entry.contentBoxSize[0].blockSize;
+		canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
+		canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
+		// re-render
+		render();
+	  }
+	});
 
-function create_agents_circleOut(agent_size)
-{
-	let pos = new Array(agent_size).fill(0).map((_, i) => i);
-	let posTex = new Float32Array(pos.map((_, i) => [0, 0, rand(2 * Math.PI), 0]).flat());
-
-	return [new Float32Array(pos), posTex];
-}
-
-function create_agents_circleIn(agent_size)
-{
-	let pos = new Array(agent_size).fill(0).map((_, i) => i);
-
-	let posTex = [];
-	pos.forEach(_ => {
-		let angle = rand(2 * Math.PI)
-		let rad = rand(700);
-		posTex.push(rad * Math.cos(angle), rad * Math.sin(angle), Math.PI + angle, 0);
-	})
-
-	return [new Float32Array(pos), new Float32Array(posTex)];
-}
-
-function create_bgId(gl)
-{
-	const ids = new Array(gl.canvas.width * gl.canvas.height).fill(0).map((_, i) => i);
-	const bgBuffer = gl.createBuffer();
-	gl.bindBuffer(gl.ARRAY_BUFFER, bgBuffer);
-	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(ids), gl.STATIC_DRAW);
-
-	return bgBuffer;
-}
-
-function create_background(gl)
-{
-	const bgBuffer = gl.createBuffer();
-	gl.bindBuffer(gl.ARRAY_BUFFER, bgBuffer);
-	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-	  -1, -1,
-	   1, -1,
-	  -1,  1,
-	  -1,  1,
-	   1, -1,
-	   1,  1,
-	]), gl.STATIC_DRAW);
-
-	return bgBuffer;
-}
-
-function bindArrayBuffer(gl, type, buffer, data, draw_type=this.gl.DYNAMIC_DRAW)
-{
-	gl.bindBuffer(type, buffer);
-	gl.bufferData(type, data, draw_type);
-}
-
-function fillAttributeData(gl, program, attributeName, elementPerAttribute, stride, offset)
-{	
-	const attr = gl.getAttribLocation(program, attributeName)	
-	gl.enableVertexAttribArray(attr);
-	gl.vertexAttribPointer(attr, elementPerAttribute, gl.FLOAT, false, stride, offset);
-}
+	observer.observe(canvas);
+};
 
 
-function init(gl) {
-	// check we can use floating point textures
-	const ext1 = gl.getExtension('OES_texture_float');
-	if (!ext1) {
-	  alert('Need OES_texture_float');
-	  return;
-	}
-	// check we can render to floating point textures
-	const ext2 = gl.getExtension('WEBGL_color_buffer_float');
-	if (!ext2) {
-	  alert('Need WEBGL_color_buffer_float');
-	  return;
-	}
-	// check we can use textures in a vertex shader
-	if (gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) < 1) {
-	  alert('Can not use textures in vertex shaders');
-	  return;
-	}
-}
-
-function createTexture(gl, data, width, height) {
-	const tex = gl.createTexture();
-
-	gl.bindTexture(gl.TEXTURE_2D, tex);
-	gl.texImage2D(
-		gl.TEXTURE_2D,
-		0,        // mip level
-		gl.RGBA,  // internal format
-		width,
-		height,
-		0,        // border
-		gl.RGBA,  // format
-		gl.FLOAT, // type
-		data,
-	);
-
-	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-	return tex;
-}
-
-function createFramebuffer(gl, tex) {
-	const fb = gl.createFramebuffer();
-	gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-	return fb;
-}
-
-
-function setUniform2f(gl, program, uniformName, vec2)
-{
-	const uniformLocation = gl.getUniformLocation(program, uniformName);;
-	gl.uniform2f(uniformLocation, vec2[0], vec2[1]);
-}
 
 function rand(min, max) {
 	if (max === undefined) {
@@ -373,3 +307,34 @@ function rand(min, max) {
 	}
 	return Math.random() * (max - min) + min;
 };
+
+
+
+function create_agents_circleOut(agent_size, x, y)
+{
+	let pos = new Array(agent_size).fill(0).map((_, i) => i);
+	pos = new Float32Array(pos.map((_, i) => [x / 2, y / 2, rand(2 * Math.PI), 0]).flat());
+
+	return pos;
+}
+  
+function create_agents_circleIn(agent_size, x, y)
+{
+	let pos = new Array(agent_size).fill(0).map((_, i) => i);
+	let posTex = [];
+	pos.forEach(_ => {
+		let angle = rand(2 * Math.PI)
+		let rad = rand(200);
+		posTex.push(x/2 + rad * Math.cos(angle), y/2 + rad * Math.sin(angle), Math.PI + angle, 0);
+	})
+
+	return new Float32Array(posTex);
+}
+
+
+function fail(msg) {
+	// eslint-disable-next-line no-alert
+	alert(msg);
+}
+
+start();
