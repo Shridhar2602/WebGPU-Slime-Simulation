@@ -13,14 +13,13 @@ The code for my working WebGL 1.0 implementation is there above.
 
 - Porting it all to WebGPU was a simple enough task due to the presence of compute pipelines.
 
+![Screenshot (71)](https://github.com/Shridhar2602/WebGPU-Slime-Simulation/assets/63835433/2687f7aa-76fc-4b78-bb2e-2dc0e97f44b3)
 
-![Screenshot (71)](https://github.com/Shridhar2602/WebGPU-Slime-Simulation/assets/63835433/58339a11-a0d8-40ab-8998-e1c501652734)
+![Screenshot (72)](https://github.com/Shridhar2602/WebGPU-Slime-Simulation/assets/63835433/332774b0-1f34-4709-a0cd-6e9935e3c66f)
 
-![Screenshot (72)](https://github.com/Shridhar2602/WebGPU-Slime-Simulation/assets/63835433/3600d6db-2a4d-4400-86a4-3406cfd87a20)
+![Screenshot (76)](https://github.com/Shridhar2602/WebGPU-Slime-Simulation/assets/63835433/d4fe181c-a48b-46d3-9ca9-b7c2fb18ea68)
 
-![Screenshot (76)](https://github.com/Shridhar2602/WebGPU-Slime-Simulation/assets/63835433/bc94c423-3eba-4d8a-be46-ab0fba7fcf61)
-
-![Screenshot (80)](https://github.com/Shridhar2602/WebGPU-Slime-Simulation/assets/63835433/a1683e10-8dba-47c8-83ab-3f0593ad5b9d)
+![Screenshot (80)](https://github.com/Shridhar2602/WebGPU-Slime-Simulation/assets/63835433/75dddbb4-e5e9-4774-8b53-c9e567a00483)
 
 ## TODO
 1. Dynamic number of agents (In WebGPU buffers/textures cannot be resized).
