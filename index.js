@@ -46,25 +46,25 @@ async function main(device) {
 	  code: VS + CS + FS,
 	});
 
-	var settings = presets.default;
-	var current_preset = {preset : presets.preset1};
+	var settings =  JSON.parse(JSON.stringify(presets.preset1));
+	var current_preset = {preset : 'preset1'};
 
 	const gui = new GUI();
 
 	const controllers = {
-		agentMoveSpeed : gui.add(settings, 'agentMoveSpeed', 0, 150).listen(),
-		agentTurnSpeed : gui.add(settings, 'agentTurnSpeed', -100, 100).listen(),
-		sensorOffsetDist : gui.add(settings, 'sensorOffsetDist', 0, 100).listen(),
-		sensorAngleOffset : gui.add(settings, 'sensorAngleOffset', 0, 360).listen(),
-		diffuseRate : gui.add(settings, 'diffuseRate', 0, 50).listen(),
-		evaporateRate : gui.add(settings, 'evaporateRate', 0, 20).listen(),
-		color : gui.addColor(settings, 'color'),
+		agentMoveSpeed : gui.add(settings, 'agentMoveSpeed', 0, 150).onChange(t => {settings.agentMoveSpeed = t}),
+		agentTurnSpeed : gui.add(settings, 'agentTurnSpeed', -100, 100).onChange(t => {settings.agentTurnSpeed = t}),
+		sensorOffsetDist : gui.add(settings, 'sensorOffsetDist', 0, 100).onChange(t => {settings.sensorOffsetDist = t}),
+		sensorAngleOffset : gui.add(settings, 'sensorAngleOffset', 0, 360).onChange(t => {settings.sensorAngleOffset = t}),
+		diffuseRate : gui.add(settings, 'diffuseRate', 0, 50).onChange(t => {settings.diffuseRate = t}),
+		evaporateRate : gui.add(settings, 'evaporateRate', 0, 20).onChange(t => {settings.evaporateRate = t}),
+		color : gui.addColor(settings, 'color').onChange(color => {settings.color = color}),
 		preset : gui.add(current_preset, 'preset', Object.keys(presets)),
 	}
-	
-	controllers.color.onChange(color => {settings.color = color});
+
 	controllers.preset.onChange(presetName => {
-	  	settings = presets[presetName];
+	  	settings = JSON.parse(JSON.stringify(presets[presetName]));
+
 
 		for (var paramName in settings) 
 		{
@@ -76,7 +76,7 @@ async function main(device) {
 	gui.add({ restart: () => restart() }, 'restart');
 
 
-	const NUM_AGENTS = 1000000;
+	const NUM_AGENTS = 200000;
 	const WIDTH = canvas.clientWidth;
 	const HEIGHT = canvas.clientHeight;
 
@@ -249,8 +249,10 @@ async function main(device) {
 		var pass = encoder.beginComputePass({label: 'slime compute pass'});
 		pass.setPipeline(computePipeline);
 		pass.setBindGroup(0, bindGroup);
-		var workGroupsNeeded = NUM_AGENTS / 64;
-		pass.dispatchWorkgroups(workGroupsNeeded);
+		var workGroupsNeeded = NUM_AGENTS / 32;
+		var temp = Math.cbrt(workGroupsNeeded);
+		// pass.dispatchWorkgroups(temp, temp, temp);
+		pass.dispatchWorkgroups(workGroupsNeeded, 1, 1);
 		pass.end();
 	
 		// Encode a command to copy the results to a mappable buffer.

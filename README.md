@@ -2,11 +2,9 @@
 
 A Slime Simulator made using WebGPU + Javascript
 
-[Live Demo](https://shridhar2602.github.io/WebGPU-Slime-Simulation/) (1 million agents)
+[Live Demo](https://shridhar2602.github.io/WebGPU-Slime-Simulation/) (250,000 agents)
 
 Check [WebGPU browser compatibility list](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API#browser_compatibility) before running the live demo.
-
-- My laptop can run this for up to 7 million particles (agents/slimes) in 1920 x 1080 resolution.
 
 - I first wrote this in WebGL 1.0, which was challenging due to the lack of compute shaders. It can, however, be simulated using the Ping-Pong technique and multiple textures.
 The code for my working WebGL 1.0 implementation is there above.

@@ -1,6 +1,6 @@
 const pre1 = {
 	agentMoveSpeed: 30.0,
-	agentTurnSpeed: 33.0,
+	agentTurnSpeed: 25.0,
 	sensorOffsetDist: 35.0,
 	sensorAngleOffset: 30,
 	diffuseRate: 3,
@@ -79,7 +79,6 @@ const pre4 = {
 // 	};
 
 export const presets = {
-	default : pre1,
 	preset1 : pre1,
 	preset2 : pre2,
 	preset3 : pre3,

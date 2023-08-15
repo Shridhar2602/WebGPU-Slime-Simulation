@@ -62,10 +62,16 @@ fn sense(agent: Agent, sensorAngleOffset: f32) -> f32 {
 	return sum;
 }
  
-@compute @workgroup_size(4, 4, 4) fn computeSomething(
-	@builtin(global_invocation_id) id: vec3<u32>) {
+@compute @workgroup_size(32, 1, 1) fn computeSomething(
+	@builtin(workgroup_id) workgroup_id : vec3<u32>,
+    @builtin(local_invocation_id) local_invocation_id : vec3<u32>,
+    // @builtin(global_invocation_id) global_invocation_id : vec3<u32>,
+    @builtin(local_invocation_index) local_invocation_index: u32,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>) {
 
-  		let i = id.x;
+		let workgroup_index = workgroup_id.x + workgroup_id.y * num_workgroups.x + workgroup_id.z * num_workgroups.x * num_workgroups.y;
+		let i = workgroup_index * 32 + local_invocation_index;
+
 		let random = rand(agents[i].pos);
 
 		// MOVE LOGIC
